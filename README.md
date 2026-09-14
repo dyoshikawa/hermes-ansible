@@ -134,12 +134,12 @@ tests/inventory.yml           localhost inventory used by CI to provision the ru
 ## Development
 
 ```bash
-mise run check    # yamllint, ansible-lint, syntax check, actionlint, pinact
+mise run check    # yamllint, ansible-lint, syntax check, gitleaks, actionlint, pinact
 mise run lint
 mise run syntax
 ```
 
-CI (`.github/workflows/ci.yml`) lints, then runs the playbook twice against `ubuntu-24.04` and
+CI (`.github/workflows/ci.yml`) lints, scans the history with gitleaks (the repository is public), then runs the playbook twice against `ubuntu-24.04` and
 `ubuntu-26.04` runners, asserting the second run reports `changed=0`, that `hermes --version` works
 for the service account, that `.env` / `config.yaml` contain the expected values and that
 `hermes-gateway` is enabled and active.
