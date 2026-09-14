@@ -1,0 +1,25 @@
+---
+- name: Assert the host runs a supported Ubuntu LTS
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == "Ubuntu"
+      - ansible_facts['distribution_version'] in hermes_agent_supported_releases
+    fail_msg: >-
+      hermes_agent supports Ubuntu {{ hermes_agent_supported_releases | join(' / ') }},
+      found {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}.
+      Set hermes_agent_check_distribution=false to override.
+  when: hermes_agent_check_distribution | bool
+
+- name: Assert the gateway can be managed by systemd
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['service_mgr'] == "systemd"
+    fail_msg: >-
+      hermes_agent_gateway_enabled needs systemd, found {{ ansible_facts['service_mgr'] }}.
+  when: hermes_agent_gateway_enabled | bool
+
+- name: Refuse to run the service as root
+  ansible.builtin.assert:
+    that:
+      - hermes_agent_user != "root"
+    fail_msg: Hermes Agent must be installed under an unprivileged account; set hermes_agent_user.

@@ -1,0 +1,8 @@
+---
+- name: Restart hermes gateway
+  ansible.builtin.systemd_service:
+    name: "{{ hermes_agent_gateway_service_name }}"
+    state: restarted
+  when:
+    - hermes_agent_gateway_enabled | bool
+    - hermes_agent_gateway_state == "started"

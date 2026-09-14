@@ -1,0 +1,6 @@
+---
+# Copy to vault.yml, fill in, then encrypt:
+#   ansible-vault encrypt inventory/group_vars/hermes/vault.yml
+vault_openrouter_api_key: sk-or-replace-me
+# vault_telegram_bot_token: 123456789:replace-me
+# vault_telegram_allowed_users: "123456789"

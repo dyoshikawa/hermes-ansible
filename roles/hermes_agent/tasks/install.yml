@@ -1,0 +1,114 @@
+---
+- name: Download the official installer
+  ansible.builtin.get_url:
+    url: "{{ hermes_agent_installer_url }}"
+    dest: "{{ hermes_agent_home }}/.hermes-install.sh"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: "0700"
+    force: "{{ hermes_agent_update | bool }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+
+- name: Build the installer arguments
+  ansible.builtin.set_fact:
+    hermes_agent_installer_args: >-
+      {{
+        ['--skip-setup', '--branch', hermes_agent_branch]
+        + (['--skip-browser'] if not hermes_agent_install_browser | bool else [])
+        + (['--skip-computer-use'] if not hermes_agent_install_computer_use | bool else [])
+        + (['--commit', hermes_agent_commit] if hermes_agent_commit | length > 0 else [])
+        + (['--force-commit'] if hermes_agent_force_commit | bool else [])
+        + hermes_agent_installer_extra_args
+      }}
+
+- name: Check for an existing install
+  ansible.builtin.stat:
+    path: "{{ hermes_agent_launcher }}"
+  register: hermes_agent_launcher_stat
+
+# The installer is idempotent for an existing checkout (it pulls the branch and
+# re-syncs the venv), so re-running it is how updates are applied.
+- name: Run the installer as the service account
+  ansible.builtin.command:
+    argv: "{{ ['bash', hermes_agent_home + '/.hermes-install.sh'] + hermes_agent_installer_args }}"
+  args:
+    chdir: "{{ hermes_agent_home }}"
+  environment:
+    HOME: "{{ hermes_agent_home }}"
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
+    PATH: "{{ hermes_agent_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  when: hermes_agent_update | bool or not hermes_agent_launcher_stat.stat.exists
+  register: hermes_agent_install_result
+  changed_when: true
+  notify: Restart hermes gateway
+
+- name: Confirm the launcher exists
+  ansible.builtin.stat:
+    path: "{{ hermes_agent_launcher }}"
+  register: hermes_agent_launcher_stat
+  failed_when: not hermes_agent_launcher_stat.stat.exists
+
+# `uv pip install --editable` reinstalls the package on every run, so the extras
+# are keyed on the lockfile checksum and re-applied only when that or the list changes.
+- name: Checksum the lockfile the extras resolve against
+  ansible.builtin.stat:
+    path: "{{ hermes_agent_install_dir }}/uv.lock"
+  register: hermes_agent_lockfile
+  when: hermes_agent_extras | length > 0
+
+- name: Record which extras are installed
+  ansible.builtin.copy:
+    content: "{{ hermes_agent_extras | sort | join(',') }} {{ hermes_agent_lockfile.stat.checksum | default('') }}\n"
+    dest: "{{ hermes_agent_hermes_home }}/.ansible-extras"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: "0600"
+  register: hermes_agent_extras_stamp
+  when: hermes_agent_extras | length > 0
+
+- name: Pre-install optional Python extras
+  ansible.builtin.command:
+    argv:
+      - "{{ hermes_agent_hermes_home }}/bin/uv"
+      - pip
+      - install
+      - --python
+      - "{{ hermes_agent_install_dir }}/venv/bin/python"
+      - --editable
+      - "{{ hermes_agent_install_dir }}[{{ hermes_agent_extras | join(',') }}]"
+  environment:
+    HOME: "{{ hermes_agent_home }}"
+    UV_NO_CONFIG: "1"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  when:
+    - hermes_agent_extras | length > 0
+    - hermes_agent_extras_stamp is changed
+  changed_when: true
+  notify: Restart hermes gateway
+
+- name: Expose hermes on the system PATH
+  ansible.builtin.file:
+    src: "{{ hermes_agent_launcher }}"
+    dest: /usr/local/bin/hermes
+    state: link
+    force: true
+  when: hermes_agent_system_symlink | bool
+
+- name: Report the installed version
+  ansible.builtin.command:
+    argv: ["{{ hermes_agent_launcher }}", "--version"]
+  environment:
+    HOME: "{{ hermes_agent_home }}"
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  register: hermes_agent_version
+  changed_when: false
+
+- name: Show the installed version
+  ansible.builtin.debug:
+    msg: "{{ hermes_agent_version.stdout_lines }}"

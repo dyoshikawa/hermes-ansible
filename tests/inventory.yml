@@ -1,0 +1,17 @@
+---
+# Inventory used by CI (and local smoke tests) to provision the machine
+# running Ansible itself.
+hermes:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+  vars:
+    hermes_agent_config:
+      model:
+        provider: openrouter
+        default: anthropic/claude-opus-5
+    hermes_agent_extras: [messaging]
+    hermes_agent_env:
+      OPENROUTER_API_KEY: sk-or-ci-placeholder
+      HERMES_CI_QUOTED: "value with spaces # and hash"

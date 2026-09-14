@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: hermes_agent
+  author: dyoshikawa
+  description: Install Hermes Agent and run its messaging gateway as a systemd service
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - resolute
+  galaxy_tags:
+    - hermes
+    - ai
+    - agent
+    - systemd
+
+dependencies: []

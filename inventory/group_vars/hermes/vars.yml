@@ -1,0 +1,15 @@
+---
+# Non-secret settings for every host in the `hermes` group.
+# See roles/hermes_agent/defaults/main.yml for the full list.
+
+hermes_agent_config:
+  model:
+    provider: openrouter
+    default: anthropic/claude-opus-5
+
+# Secrets live in vault.yml (git-ignored); this indirection keeps
+# `ansible-vault edit` diffs readable and lets you grep for the key names.
+hermes_agent_env:
+  OPENROUTER_API_KEY: "{{ vault_openrouter_api_key }}"
+  # TELEGRAM_BOT_TOKEN: "{{ vault_telegram_bot_token }}"
+  # TELEGRAM_ALLOWED_USERS: "{{ vault_telegram_allowed_users }}"

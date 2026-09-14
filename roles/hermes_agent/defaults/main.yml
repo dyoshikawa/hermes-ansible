@@ -1,0 +1,74 @@
+---
+# Unprivileged account that owns the Hermes install and runs the gateway.
+hermes_agent_user: hermes
+hermes_agent_group: "{{ hermes_agent_user }}"
+hermes_agent_home: "/home/{{ hermes_agent_user }}"
+# Extra groups for the service account (e.g. ["docker"] when terminal.backend is docker).
+hermes_agent_user_groups: []
+
+# Data directory (config.yaml, .env, sessions, logs) and the git checkout the
+# official installer creates for a per-user install.
+hermes_agent_hermes_home: "{{ hermes_agent_home }}/.hermes"
+hermes_agent_install_dir: "{{ hermes_agent_hermes_home }}/hermes-agent"
+hermes_agent_launcher: "{{ hermes_agent_install_dir }}/venv/bin/hermes"
+
+# Official installer. Pin a commit for reproducible provisioning; the installer
+# refuses to roll an existing install back unless hermes_agent_force_commit is true.
+hermes_agent_installer_url: https://hermes-agent.nousresearch.com/install.sh
+hermes_agent_branch: main
+hermes_agent_commit: ""
+hermes_agent_force_commit: false
+# Re-run the installer on every play to pull the latest commit of the branch.
+hermes_agent_update: false
+# Playwright/Chromium and the Computer Use driver are pointless on a headless VPS.
+hermes_agent_install_browser: false
+hermes_agent_install_computer_use: false
+hermes_agent_installer_extra_args: []
+# Optional extras from hermes-agent's pyproject to pre-install into the venv,
+# e.g. ["messaging"] for Telegram/Discord/Slack. Hermes lazy-installs them on
+# first use anyway; pre-installing keeps the first gateway start offline-safe.
+hermes_agent_extras: []
+
+# Refuse to run on anything but a supported Ubuntu LTS.
+hermes_agent_check_distribution: true
+hermes_agent_supported_releases: ["24.04", "26.04"]
+
+# apt packages the installer needs (it downloads Node.js as a .tar.xz archive),
+# ripgrep (which the installer would otherwise try to apt-install with sudo) and
+# acl, which Ansible needs to become the unprivileged service account.
+hermes_agent_apt_packages:
+  - acl
+  - ca-certificates
+  - curl
+  - git
+  - ripgrep
+  - xz-utils
+# Add e.g. ffmpeg (voice/TTS conversion) or build-essential here.
+hermes_agent_extra_apt_packages: []
+
+# Symlink the venv launcher to /usr/local/bin so admins can run `hermes` too.
+hermes_agent_system_symlink: true
+
+# Secrets written to ~/.hermes/.env (mode 0600). Keep the real values in an
+# Ansible Vault file, e.g. OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS.
+hermes_agent_env: {}
+# When true the .env file is replaced with exactly hermes_agent_env; when false
+# keys are merged into whatever `hermes config set` / the setup wizard wrote.
+hermes_agent_env_exclusive: false
+
+# Non-secret settings merged (recursively) into ~/.hermes/config.yaml.
+# Example:
+#   hermes_agent_config:
+#     model:
+#       provider: openrouter
+#       default: anthropic/claude-opus-5
+hermes_agent_config: {}
+
+# Messaging gateway as a boot-time systemd *system* service running as the
+# service account (`hermes gateway install --system --run-as-user`).
+hermes_agent_gateway_enabled: true
+hermes_agent_gateway_service_name: hermes-gateway
+hermes_agent_gateway_state: started
+
+# .env values matching this pattern are written bare; anything else is JSON-quoted.
+hermes_agent_env_plain_pattern: '^[A-Za-z0-9_./:@,+=-]*$'

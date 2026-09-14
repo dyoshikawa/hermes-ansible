@@ -1,0 +1,6 @@
+---
+- name: Install Hermes Agent
+  hosts: hermes
+  become: true
+  roles:
+    - role: hermes_agent

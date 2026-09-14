@@ -1,0 +1,31 @@
+---
+- name: Install packages the installer relies on
+  ansible.builtin.apt:
+    name: "{{ hermes_agent_apt_packages + hermes_agent_extra_apt_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the service group
+  ansible.builtin.group:
+    name: "{{ hermes_agent_group }}"
+    state: present
+
+- name: Create the service account
+  ansible.builtin.user:
+    name: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    groups: "{{ hermes_agent_user_groups }}"
+    append: true
+    home: "{{ hermes_agent_home }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Keep the home directory private
+  ansible.builtin.file:
+    path: "{{ hermes_agent_home }}"
+    state: directory
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: "0750"

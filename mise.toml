@@ -1,0 +1,34 @@
+[tools]
+python = "3.13"
+uv = "latest"
+# GitHub Actions tooling, resolved through the aqua registry backend.
+"aqua:rhysd/actionlint" = "latest"
+"aqua:suzuki-shunsuke/pinact" = "latest"
+
+[tasks.install]
+description = "Install Ansible and the linters into .venv"
+run = "uv sync"
+
+[tasks.lint]
+description = "Run yamllint and ansible-lint"
+run = ["uv run yamllint .", "uv run ansible-lint"]
+
+[tasks.syntax]
+description = "Syntax-check the playbook against the example inventory"
+run = "uv run ansible-playbook -i inventory/hosts.example.yml site.yml --syntax-check"
+
+[tasks.check]
+description = "Everything CI runs: lint, syntax check, actionlint, pinact"
+depends = ["lint", "syntax", "actionlint", "pinact:check"]
+
+[tasks.actionlint]
+description = "Lint GitHub Actions workflows"
+run = "actionlint -color"
+
+[tasks.pinact]
+description = "Pin GitHub Actions to full-length commit SHAs"
+run = "pinact run"
+
+[tasks."pinact:check"]
+description = "Fail when a GitHub Action is not pinned to a commit SHA"
+run = "pinact run --check"

@@ -1,0 +1,91 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup mise
+        uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          experimental: true
+
+      - name: Install Ansible and linters
+        run: mise run install
+
+      - name: Run yamllint and ansible-lint
+        run: mise run lint
+
+      - name: Syntax-check the playbook
+        run: mise run syntax
+
+  provision:
+    name: Provision ${{ matrix.os }}
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup mise
+        uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          experimental: true
+
+      - name: Install Ansible
+        run: mise run install
+
+      # The runner is itself an Ubuntu LTS box with systemd and passwordless
+      # sudo, so the playbook provisions it exactly like a VPS.
+      - name: Run the playbook against the runner
+        run: uv run ansible-playbook -i tests/inventory.yml site.yml
+
+      - name: Run the playbook again and require no changes
+        run: |
+          uv run ansible-playbook -i tests/inventory.yml site.yml | tee second-run.log
+          grep -E 'localhost\s+: ok=[0-9]+\s+changed=0 ' second-run.log
+
+      - name: Verify the install
+        run: |
+          sudo -u hermes -H hermes --version
+          test -L /usr/local/bin/hermes
+          sudo test -f /home/hermes/.hermes/.env
+          sudo grep -q '^OPENROUTER_API_KEY=sk-or-ci-placeholder$' /home/hermes/.hermes/.env
+          sudo grep -q '^HERMES_CI_QUOTED="value with spaces # and hash"$' /home/hermes/.hermes/.env
+          sudo -u hermes -H hermes config get model.default | grep -qx 'anthropic/claude-opus-5'
+          sudo -u hermes -H /home/hermes/.hermes/hermes-agent/venv/bin/python -c 'import telegram'
+
+      - name: Verify the gateway service
+        run: |
+          systemctl is-enabled hermes-gateway
+          systemctl is-active hermes-gateway
+          grep -q '^User=hermes$' /etc/systemd/system/hermes-gateway.service
+          grep -q 'HERMES_HOME=/home/hermes/.hermes' /etc/systemd/system/hermes-gateway.service
+
+      - name: Show the gateway log
+        if: always()
+        run: |
+          systemctl status hermes-gateway --no-pager || true
+          sudo journalctl -u hermes-gateway --no-pager -n 100 || true
+          sudo cat /home/hermes/.hermes/logs/gateway.log 2>/dev/null | tail -n 100 || true

@@ -1,0 +1,16 @@
+---
+- name: Check the target platform
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Install system packages and the service account
+  ansible.builtin.import_tasks: system.yml
+
+- name: Install Hermes Agent with the official installer
+  ansible.builtin.import_tasks: install.yml
+
+- name: Write .env and config.yaml
+  ansible.builtin.import_tasks: configure.yml
+
+- name: Manage the gateway systemd service
+  ansible.builtin.import_tasks: gateway.yml
+  when: hermes_agent_gateway_enabled | bool

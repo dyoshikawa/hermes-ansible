@@ -1,0 +1,9 @@
+---
+profile: production
+
+exclude_paths:
+  - .venv/
+  - .github/
+
+# Variables are prefixed with the role name where ansible-lint expects it.
+var_naming_pattern: "^[a-z_][a-z0-9_]*$"
