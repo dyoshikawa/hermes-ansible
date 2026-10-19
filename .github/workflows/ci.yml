@@ -75,12 +75,21 @@ jobs:
       - name: Verify the install
         run: |
           sudo -u hermes -H hermes --version
-          test -L /usr/local/bin/hermes
+          # /usr/local/bin/hermes is a root-owned wrapper, not a link into the
+          # checkout, and running it as root drops to the service account.
+          test ! -L /usr/local/bin/hermes
+          test "$(stat -c '%U:%G %a' /usr/local/bin/hermes)" = 'root:root 755'
+          sudo hermes --version
           sudo test -f /home/hermes/.hermes/.env
           sudo grep -q '^OPENROUTER_API_KEY=sk-or-ci-placeholder$' /home/hermes/.hermes/.env
           sudo grep -q '^HERMES_CI_QUOTED="value with spaces # and hash"$' /home/hermes/.hermes/.env
           sudo -u hermes -H hermes config get model.default | grep -qx 'anthropic/claude-opus-5'
-          sudo -u hermes -H /home/hermes/.hermes/hermes-agent/venv/bin/python -c 'import telegram'
+          # The messaging extra landed in PM's dependency environment.
+          root=/home/hermes/.hermes/hermes-agent
+          py=$(sudo -u hermes -H "$root/.hermes/bin/hermes" --print-runtime-command \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)[0])')
+          sudo -u hermes -H "$py" -I -c \
+            'import sys; sys.path.insert(0, sys.argv[1]); import hermes_bootstrap, telegram' "$root"
 
       - name: Verify the gateway service
         run: |
@@ -88,6 +97,18 @@ jobs:
           systemctl is-active hermes-gateway
           grep -q '^User=hermes$' /etc/systemd/system/hermes-gateway.service
           grep -q 'HERMES_HOME=/home/hermes/.hermes' /etc/systemd/system/hermes-gateway.service
+          test "$(stat -c '%U:%G' /etc/systemd/system/hermes-gateway.service)" = 'root:root'
+          grep -qx 'User=hermes' /etc/systemd/system/hermes-gateway.service.d/10-ansible-identity.conf
+          test "$(systemctl show -p User --value hermes-gateway)" = hermes
+          test "$(systemctl show -p NoNewPrivileges --value hermes-gateway)" = yes
+          test "$(systemctl show -p ProtectSystem --value hermes-gateway)" = strict
+          test -f /var/lib/systemd/linger/hermes
+          # Still up after the handler restarts, i.e. it does not crash-loop under the sandbox.
+          sleep 15
+          systemctl is-active hermes-gateway
+          test "$(systemctl show -p NRestarts --value hermes-gateway)" = 0
+          sudo -u hermes -H git -C /home/hermes/.hermes/hermes-agent rev-parse HEAD \
+            | grep -qx "$(grep -E '^hermes_agent_commit:' roles/hermes_agent/defaults/main.yml | awk '{print $2}')"
 
       - name: Show the gateway log
         if: always()

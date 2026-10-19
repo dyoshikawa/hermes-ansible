@@ -23,3 +23,20 @@
     that:
       - hermes_agent_user != "root"
     fail_msg: Hermes Agent must be installed under an unprivileged account; set hermes_agent_user.
+
+- name: Refuse an installer that is not checksum-verified
+  ansible.builtin.assert:
+    that:
+      - hermes_agent_installer_checksum | length > 0 or hermes_agent_installer_allow_unverified | bool
+    fail_msg: >-
+      hermes_agent_installer_checksum is empty, so the installer would run unverified.
+      Set it to the sha256 of hermes_agent_installer_url, or set
+      hermes_agent_installer_allow_unverified=true to accept that risk.
+
+- name: Require a full commit SHA for hermes_agent_commit
+  ansible.builtin.assert:
+    that:
+      - hermes_agent_commit is match('^([0-9a-f]{40})?$')
+    fail_msg: >-
+      hermes_agent_commit must be a full 40-character commit SHA (or "" to follow
+      hermes_agent_branch); the role compares it with `git rev-parse HEAD`.

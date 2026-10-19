@@ -1,12 +1,15 @@
 ---
+# With a checksum, get_url re-downloads only when the file on disk does not
+# match it, and fails before anything runs when the download does not either.
 - name: Download the official installer
   ansible.builtin.get_url:
     url: "{{ hermes_agent_installer_url }}"
     dest: "{{ hermes_agent_home }}/.hermes-install.sh"
+    checksum: "{{ hermes_agent_installer_checksum }}"
     owner: "{{ hermes_agent_user }}"
     group: "{{ hermes_agent_group }}"
     mode: "0700"
-    force: "{{ hermes_agent_update | bool }}"
+    force: "{{ hermes_agent_update | bool and hermes_agent_installer_checksum | length == 0 }}"
   become: true
   become_user: "{{ hermes_agent_user }}"
 
@@ -25,10 +28,25 @@
 - name: Check for an existing install
   ansible.builtin.stat:
     path: "{{ hermes_agent_launcher }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
   register: hermes_agent_launcher_stat
 
+- name: Read the installed commit
+  ansible.builtin.command:
+    argv: [git, -C, "{{ hermes_agent_install_dir }}", rev-parse, HEAD]
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  register: hermes_agent_installed_commit
+  changed_when: false
+  failed_when: false
+  when:
+    - hermes_agent_commit | length > 0
+    - hermes_agent_launcher_stat.stat.exists
+
 # The installer is idempotent for an existing checkout (it pulls the branch and
-# re-syncs the venv), so re-running it is how updates are applied.
+# re-syncs the dependencies), so re-running it is how updates are applied — on request,
+# or when the checkout is not at the pinned commit.
 - name: Run the installer as the service account
   ansible.builtin.command:
     argv: "{{ ['bash', hermes_agent_home + '/.hermes-install.sh'] + hermes_agent_installer_args }}"
@@ -40,7 +58,11 @@
     PATH: "{{ hermes_agent_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
   become: true
   become_user: "{{ hermes_agent_user }}"
-  when: hermes_agent_update | bool or not hermes_agent_launcher_stat.stat.exists
+  when: >-
+    hermes_agent_update | bool
+    or not hermes_agent_launcher_stat.stat.exists
+    or (hermes_agent_commit | length > 0
+        and hermes_agent_installed_commit.stdout | default('') | trim != hermes_agent_commit)
   register: hermes_agent_install_result
   changed_when: true
   notify: Restart hermes gateway
@@ -48,14 +70,18 @@
 - name: Confirm the launcher exists
   ansible.builtin.stat:
     path: "{{ hermes_agent_launcher }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
   register: hermes_agent_launcher_stat
   failed_when: not hermes_agent_launcher_stat.stat.exists
 
-# `uv pip install --editable` reinstalls the package on every run, so the extras
-# are keyed on the lockfile checksum and re-applied only when that or the list changes.
+# `hermes pm install` re-syncs the environment on every run, so the extras are
+# keyed on the lockfile checksum and re-applied only when that or the list changes.
 - name: Checksum the lockfile the extras resolve against
   ansible.builtin.stat:
     path: "{{ hermes_agent_install_dir }}/uv.lock"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
   register: hermes_agent_lockfile
   when: hermes_agent_extras | length > 0
 
@@ -66,22 +92,23 @@
     owner: "{{ hermes_agent_user }}"
     group: "{{ hermes_agent_group }}"
     mode: "0600"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
   register: hermes_agent_extras_stamp
   when: hermes_agent_extras | length > 0
 
+# PM owns the dependency environment; `hermes pm install --extra` adds the
+# extras to it and records them so later updates keep them.
 - name: Pre-install optional Python extras
   ansible.builtin.command:
-    argv:
-      - "{{ hermes_agent_hermes_home }}/bin/uv"
-      - pip
-      - install
-      - --python
-      - "{{ hermes_agent_install_dir }}/venv/bin/python"
-      - --editable
-      - "{{ hermes_agent_install_dir }}[{{ hermes_agent_extras | join(',') }}]"
+    argv: >-
+      {{ [hermes_agent_launcher, 'pm', 'install']
+         + hermes_agent_extras | map('regex_replace', '^', '--extra=') | list }}
+  args:
+    chdir: "{{ hermes_agent_install_dir }}"
   environment:
     HOME: "{{ hermes_agent_home }}"
-    UV_NO_CONFIG: "1"
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
   become: true
   become_user: "{{ hermes_agent_user }}"
   when:
@@ -90,13 +117,33 @@
   changed_when: true
   notify: Restart hermes gateway
 
-- name: Expose hermes on the system PATH
+# Earlier versions of this role symlinked /usr/local/bin/hermes straight to the
+# launcher, which let the service account run code as whoever invoked it.
+- name: Inspect /usr/local/bin/hermes
+  ansible.builtin.stat:
+    path: /usr/local/bin/hermes
+  register: hermes_agent_system_command_stat
+
+- name: Remove the old symlink to the launcher
   ansible.builtin.file:
-    src: "{{ hermes_agent_launcher }}"
+    path: /usr/local/bin/hermes
+    state: absent
+  when: hermes_agent_system_command_stat.stat.islnk | default(false)
+
+- name: Install the root-owned hermes wrapper
+  ansible.builtin.template:
+    src: hermes-wrapper.sh.j2
     dest: /usr/local/bin/hermes
-    state: link
-    force: true
-  when: hermes_agent_system_symlink | bool
+    owner: root
+    group: root
+    mode: "0755"
+  when: hermes_agent_system_command | bool
+
+- name: Remove the hermes wrapper
+  ansible.builtin.file:
+    path: /usr/local/bin/hermes
+    state: absent
+  when: not hermes_agent_system_command | bool
 
 - name: Report the installed version
   ansible.builtin.command:

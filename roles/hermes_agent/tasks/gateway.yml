@@ -1,28 +1,169 @@
 ---
-- name: Check whether the gateway unit is installed
-  ansible.builtin.stat:
-    path: "/etc/systemd/system/{{ hermes_agent_gateway_service_name }}.service"
-  register: hermes_agent_gateway_unit
+# Hermes generates its own unit (ExecStart launcher, PATH with the managed Node,
+# watchdog settings, ...) and compares the installed unit against it on every
+# start, so the role asks Hermes for it instead of keeping a copy of the
+# template. Hermes runs as the service account here, never as root: its code
+# lives in a tree that account can write to.
+- name: Resolve the interpreter of the installed launcher
+  ansible.builtin.command:
+    argv: ["{{ hermes_agent_launcher }}", --print-runtime-command]
+  environment:
+    HOME: "{{ hermes_agent_home }}"
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  register: hermes_agent_runtime_command
+  changed_when: false
+  check_mode: false
 
-# `hermes gateway install --system` must run as root; it writes the unit with
-# User=/Group= of the service account and HERMES_HOME under its home. Root's own
-# ~/.hermes is only touched for the CLI bootstrap, never by the gateway.
-- name: Install the gateway as a system service
+- name: Render the gateway unit as the service account
   ansible.builtin.command:
     argv:
-      - "{{ hermes_agent_launcher }}"
-      - gateway
-      - install
-      - --system
-      - --run-as-user
+      - "{{ (hermes_agent_runtime_command.stdout | from_json)[0] }}"
+      - -I
+      - -c
+      - |
+        import contextlib, sys
+        sys.path.insert(0, sys.argv[1])
+        import hermes_bootstrap  # selects the installed dependency generation
+        from hermes_cli import gateway
+        user = sys.argv[2]
+        with contextlib.redirect_stdout(sys.stderr):
+            gateway._prepare_service_launcher(system=True, run_as_user=user)
+            unit = gateway.generate_systemd_unit(system=True, run_as_user=user)
+        sys.stdout.write(unit)
+      - "{{ hermes_agent_install_dir }}"
       - "{{ hermes_agent_user }}"
-      - --start-on-login
-      - --no-start-now
+  args:
+    chdir: "{{ hermes_agent_hermes_home }}"
   environment:
-    HOME: /root
+    HOME: "{{ hermes_agent_home }}"
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
     PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-  when: not hermes_agent_gateway_unit.stat.exists
-  changed_when: true
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  register: hermes_agent_gateway_unit_render
+  changed_when: false
+  check_mode: false
+
+- name: Look up the service account's uid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ hermes_agent_user }}"
+
+# The service account wrote that text, so before root installs it every line
+# must match the exact shape Hermes emits: fixed values for everything systemd
+# acts on as root (output files, dependencies, Exec prefixes), and only plain
+# path characters where the value varies. Anything else fails the play.
+- name: Refuse a gateway unit that does not match what Hermes generates
+  vars:
+    hermes_agent_unit_text: "{{ hermes_agent_gateway_unit_render.stdout }}"
+    hermes_agent_unit_uid: "{{ ansible_facts['getent_passwd'][hermes_agent_user][1] }}"
+    # Exec commands: every word quoted, no spaces, quotes, backslashes, % or $, and
+    # the first word an absolute path — systemd strips the quotes before reading
+    # the -@:+! prefixes, so "+/bin/x" would run as root.
+    hermes_agent_unit_word: '"[A-Za-z0-9_./:@+,=-]+"'
+    hermes_agent_unit_cmd: '"/[A-Za-z0-9_./:@+,=-]*"( {{ hermes_agent_unit_word }})*'
+    hermes_agent_unit_patterns:
+      Unit:
+        - 'Description=[A-Za-z0-9 ()._-]+'
+        - '(After|Wants)=(network-online\.target|user@{{ hermes_agent_unit_uid }}\.service)'
+        - 'StartLimitIntervalSec=0'
+      Service:
+        - 'Type=(simple|notify)'
+        - 'NotifyAccess=main'
+        - 'WatchdogSec=[0-9]+s'
+        - 'User={{ hermes_agent_user | regex_escape }}'
+        - 'Group={{ hermes_agent_group | regex_escape }}'
+        - 'ExecStart={{ hermes_agent_unit_cmd }}'
+        - 'Exec(Stop|StopPost)=-{{ hermes_agent_unit_cmd }}'
+        - 'ExecReload=/bin/kill -USR1 \$MAINPID'
+        - 'WorkingDirectory=/[A-Za-z0-9_./@+,=-]*'
+        - 'Environment="(HOME|USER|LOGNAME|PATH|LD_LIBRARY_PATH|HERMES_HOME|HERMES_SUPERVISED_CHILD)=[A-Za-z0-9_./:@+,=-]*"'
+        - 'Restart=always'
+        - '(RestartSec|RestartSteps|RestartForceExitStatus|SuccessExitStatus|RestartPreventExitStatus|TimeoutStopSec)=[0-9]+'
+        - 'RestartMaxDelaySec=[0-9]+(ms|s|min)?'
+        - 'KillMode=mixed'
+        - 'KillSignal=SIGTERM'
+        - '(StandardOutput|StandardError)=journal'
+      Install:
+        - 'WantedBy=multi-user\.target'
+    # [Unit], [Service], [Install] exactly once and in that order, each holding
+    # only its own directives (a User= under [Unit] would be ignored by systemd).
+    hermes_agent_unit_regex: >-
+      ^\[Unit\]\n((|{{ hermes_agent_unit_patterns.Unit | join('|') }})\n)*\[Service\]\n((|{{
+      hermes_agent_unit_patterns.Service | join('|') }})\n)*\[Install\]\n((|{{
+      hermes_agent_unit_patterns.Install | join('|') }})\n)*$
+    # Safe only after the printable-ASCII check below (no \r, \x85, ... to split on).
+    hermes_agent_unit_lines: "{{ hermes_agent_unit_text.splitlines() }}"
+  ansible.builtin.assert:
+    that:
+      # Printable ASCII and \n only, so Python and systemd split lines alike.
+      - hermes_agent_unit_text is match('^[ -~\n]*$')
+      - (hermes_agent_unit_text ~ '\n') is match(hermes_agent_unit_regex)
+      # Exactly one User=/Group=: a missing User= would run the gateway as root.
+      - hermes_agent_unit_lines | select('match', '^(User|Group)=') | list
+        == ['User=' ~ hermes_agent_user, 'Group=' ~ hermes_agent_group]
+      - hermes_agent_unit_lines | select('match', '^ExecStart=') | list | length == 1
+    fail_msg: >-
+      The gateway unit Hermes generated does not have the expected shape. Refusing to
+      install it as root.
+    quiet: true
+
+- name: Install the gateway unit
+  ansible.builtin.copy:
+    content: "{{ hermes_agent_gateway_unit_render.stdout }}\n"
+    dest: "{{ hermes_agent_gateway_unit_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart hermes gateway
+
+- name: Create the gateway drop-in directory
+  ansible.builtin.file:
+    path: "{{ hermes_agent_gateway_unit_path }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Belt and braces: a root-owned drop-in pins the identity whatever the unit says.
+- name: Pin the gateway's user and group
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (hermes_agent role); local edits are overwritten.
+      [Service]
+      User={{ hermes_agent_user }}
+      Group={{ hermes_agent_group }}
+    dest: "{{ hermes_agent_gateway_unit_path }}.d/10-ansible-identity.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart hermes gateway
+
+- name: Install the gateway hardening drop-in
+  ansible.builtin.template:
+    src: gateway-hardening.conf.j2
+    dest: "{{ hermes_agent_gateway_unit_path }}.d/50-ansible-hardening.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  when: hermes_agent_gateway_hardening_enabled | bool
+  notify: Restart hermes gateway
+
+- name: Remove the gateway hardening drop-in
+  ansible.builtin.file:
+    path: "{{ hermes_agent_gateway_unit_path }}.d/50-ansible-hardening.conf"
+    state: absent
+  when: not hermes_agent_gateway_hardening_enabled | bool
+  notify: Restart hermes gateway
+
+# Cron and Kanban workers cross `systemd-run --user`, which needs the service
+# account's user manager running at boot (what `hermes gateway install` does).
+- name: Enable lingering for the service account
+  ansible.builtin.command:
+    argv: [loginctl, enable-linger, "{{ hermes_agent_user }}"]
+    creates: "/var/lib/systemd/linger/{{ hermes_agent_user }}"
 
 - name: Manage the gateway service
   ansible.builtin.systemd_service:
