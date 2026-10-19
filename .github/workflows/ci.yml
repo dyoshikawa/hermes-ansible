@@ -76,7 +76,7 @@ jobs:
         run: |
           sudo -u hermes -H hermes --version
           # /usr/local/bin/hermes is a root-owned wrapper, not a link into the
-          # venv, and running it as root drops to the service account.
+          # checkout, and running it as root drops to the service account.
           test ! -L /usr/local/bin/hermes
           test "$(stat -c '%U:%G %a' /usr/local/bin/hermes)" = 'root:root 755'
           sudo hermes --version
@@ -84,7 +84,12 @@ jobs:
           sudo grep -q '^OPENROUTER_API_KEY=sk-or-ci-placeholder$' /home/hermes/.hermes/.env
           sudo grep -q '^HERMES_CI_QUOTED="value with spaces # and hash"$' /home/hermes/.hermes/.env
           sudo -u hermes -H hermes config get model.default | grep -qx 'anthropic/claude-opus-5'
-          sudo -u hermes -H /home/hermes/.hermes/hermes-agent/venv/bin/python -c 'import telegram'
+          # The messaging extra landed in PM's dependency environment.
+          root=/home/hermes/.hermes/hermes-agent
+          py=$(sudo -u hermes -H "$root/.hermes/bin/hermes" --print-runtime-command \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)[0])')
+          sudo -u hermes -H "$py" -I -c \
+            'import sys; sys.path.insert(0, sys.argv[1]); import hermes_bootstrap, telegram' "$root"
 
       - name: Verify the gateway service
         run: |

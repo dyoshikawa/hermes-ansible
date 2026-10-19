@@ -1,6 +1,6 @@
 #!/bin/sh
 # Managed by Ansible (hermes_agent role); local edits are overwritten.
-# Runs Hermes Agent as {{ hermes_agent_user }}. The launcher lives in a venv that
+# Runs Hermes Agent as {{ hermes_agent_user }}. The launcher lives in a tree that
 # account can write to, so it must never run with anyone else's privileges.
 set -eu
 launcher={{ hermes_agent_launcher | quote }}
@@ -13,9 +13,17 @@ case "$(id -un)" in
     exec "$launcher" "$@"
     ;;
   root)
-    exec runuser -u "$service_user" -- env HOME="$service_home" HERMES_HOME="$hermes_home" "$launcher" "$@"
+    # --pty: do not hand root's terminal to the service account (TIOCSTI).
+    # env -i: do not leak root's environment (SUDO_USER, SSH_AUTH_SOCK, ...).
+    pty=
+    if [ -t 0 ]; then pty=--pty; fi
+    exec runuser $pty -u "$service_user" -- env -i \
+      HOME="$service_home" USER="$service_user" LOGNAME="$service_user" \
+      HERMES_HOME="$hermes_home" PATH=/usr/local/bin:/usr/bin:/bin \
+      TERM="${TERM:-dumb}" LANG="${LANG:-C.UTF-8}" \
+      "$launcher" "$@"
     ;;
   *)
-    exec sudo -u "$service_user" -H "$launcher" "$@"
+    exec sudo -u "$service_user" -H env HERMES_HOME="$hermes_home" "$launcher" "$@"
     ;;
 esac

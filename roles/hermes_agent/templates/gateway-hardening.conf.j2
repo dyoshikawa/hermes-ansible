@@ -1,6 +1,6 @@
 # Managed by Ansible (hermes_agent role); local edits are overwritten.
 # Sandboxing for the Hermes gateway; see hermes_agent_gateway_hardening.
 [Service]
-{% for key, value in hermes_agent_gateway_hardening | dictsort %}
+{% for key, value in hermes_agent_gateway_hardening | combine(hermes_agent_gateway_hardening_extra) | dictsort %}
 {{ key }}={{ value }}
 {% endfor %}

@@ -32,3 +32,11 @@
       hermes_agent_installer_checksum is empty, so the installer would run unverified.
       Set it to the sha256 of hermes_agent_installer_url, or set
       hermes_agent_installer_allow_unverified=true to accept that risk.
+
+- name: Require a full commit SHA for hermes_agent_commit
+  ansible.builtin.assert:
+    that:
+      - hermes_agent_commit is match('^([0-9a-f]{40})?$')
+    fail_msg: >-
+      hermes_agent_commit must be a full 40-character commit SHA (or "" to follow
+      hermes_agent_branch); the role compares it with `git rev-parse HEAD`.
