@@ -59,47 +59,55 @@
   vars:
     hermes_agent_unit_text: "{{ hermes_agent_gateway_unit_render.stdout }}"
     hermes_agent_unit_uid: "{{ ansible_facts['getent_passwd'][hermes_agent_user][1] }}"
-    # A quoted argv word / an Environment value: no spaces, quotes, backslashes, % or $.
+    # Exec commands: every word quoted, no spaces, quotes, backslashes, % or $, and
+    # the first word an absolute path — systemd strips the quotes before reading
+    # the -@:+! prefixes, so "+/bin/x" would run as root.
     hermes_agent_unit_word: '"[A-Za-z0-9_./:@+,=-]+"'
-    hermes_agent_unit_argv: "{{ hermes_agent_unit_word }}( {{ hermes_agent_unit_word }})*"
-    hermes_agent_unit_line_patterns:
-      - ''
-      - '\[(Unit|Service|Install)\]'
-      - 'Description=[A-Za-z0-9 ()._-]+'
-      - '(After|Wants)=(network-online\.target|user@{{ hermes_agent_unit_uid }}\.service)'
-      - 'StartLimitIntervalSec=0'
-      - 'Type=(simple|notify)'
-      - 'NotifyAccess=main'
-      - 'WatchdogSec=[0-9]+s'
-      - 'User={{ hermes_agent_user | regex_escape }}'
-      - 'Group={{ hermes_agent_group | regex_escape }}'
-      - 'ExecStart={{ hermes_agent_unit_argv }}'
-      - 'Exec(Stop|StopPost)=-{{ hermes_agent_unit_argv }}'
-      - 'ExecReload=/bin/kill -USR1 \$MAINPID'
-      - 'WorkingDirectory=/[A-Za-z0-9_./@+,=-]*'
-      - 'Environment="(HOME|USER|LOGNAME|PATH|LD_LIBRARY_PATH|HERMES_HOME|HERMES_SUPERVISED_CHILD)=[A-Za-z0-9_./:@+,=-]*"'
-      - 'Restart=always'
-      - '(RestartSec|RestartSteps|RestartForceExitStatus|SuccessExitStatus|RestartPreventExitStatus|TimeoutStopSec)=[0-9]+'
-      - 'RestartMaxDelaySec=[0-9]+(ms|s|min)?'
-      - 'KillMode=mixed'
-      - 'KillSignal=SIGTERM'
-      - '(StandardOutput|StandardError)=journal'
-      - 'WantedBy=multi-user\.target'
-    hermes_agent_unit_line_regex: "^({{ hermes_agent_unit_line_patterns | join('|') }})$"
+    hermes_agent_unit_cmd: '"/[A-Za-z0-9_./:@+,=-]*"( {{ hermes_agent_unit_word }})*'
+    hermes_agent_unit_patterns:
+      Unit:
+        - 'Description=[A-Za-z0-9 ()._-]+'
+        - '(After|Wants)=(network-online\.target|user@{{ hermes_agent_unit_uid }}\.service)'
+        - 'StartLimitIntervalSec=0'
+      Service:
+        - 'Type=(simple|notify)'
+        - 'NotifyAccess=main'
+        - 'WatchdogSec=[0-9]+s'
+        - 'User={{ hermes_agent_user | regex_escape }}'
+        - 'Group={{ hermes_agent_group | regex_escape }}'
+        - 'ExecStart={{ hermes_agent_unit_cmd }}'
+        - 'Exec(Stop|StopPost)=-{{ hermes_agent_unit_cmd }}'
+        - 'ExecReload=/bin/kill -USR1 \$MAINPID'
+        - 'WorkingDirectory=/[A-Za-z0-9_./@+,=-]*'
+        - 'Environment="(HOME|USER|LOGNAME|PATH|LD_LIBRARY_PATH|HERMES_HOME|HERMES_SUPERVISED_CHILD)=[A-Za-z0-9_./:@+,=-]*"'
+        - 'Restart=always'
+        - '(RestartSec|RestartSteps|RestartForceExitStatus|SuccessExitStatus|RestartPreventExitStatus|TimeoutStopSec)=[0-9]+'
+        - 'RestartMaxDelaySec=[0-9]+(ms|s|min)?'
+        - 'KillMode=mixed'
+        - 'KillSignal=SIGTERM'
+        - '(StandardOutput|StandardError)=journal'
+      Install:
+        - 'WantedBy=multi-user\.target'
+    # [Unit], [Service], [Install] exactly once and in that order, each holding
+    # only its own directives (a User= under [Unit] would be ignored by systemd).
+    hermes_agent_unit_regex: >-
+      ^\[Unit\]\n((|{{ hermes_agent_unit_patterns.Unit | join('|') }})\n)*\[Service\]\n((|{{
+      hermes_agent_unit_patterns.Service | join('|') }})\n)*\[Install\]\n((|{{
+      hermes_agent_unit_patterns.Install | join('|') }})\n)*$
     # Safe only after the printable-ASCII check below (no \r, \x85, ... to split on).
     hermes_agent_unit_lines: "{{ hermes_agent_unit_text.splitlines() }}"
   ansible.builtin.assert:
     that:
       # Printable ASCII and \n only, so Python and systemd split lines alike.
       - hermes_agent_unit_text is match('^[ -~\n]*$')
-      - hermes_agent_unit_lines | reject('match', hermes_agent_unit_line_regex) | list | length == 0
+      - (hermes_agent_unit_text ~ '\n') is match(hermes_agent_unit_regex)
       # Exactly one User=/Group=: a missing User= would run the gateway as root.
       - hermes_agent_unit_lines | select('match', '^(User|Group)=') | list
         == ['User=' ~ hermes_agent_user, 'Group=' ~ hermes_agent_group]
       - hermes_agent_unit_lines | select('match', '^ExecStart=') | list | length == 1
     fail_msg: >-
       The gateway unit Hermes generated does not have the expected shape. Refusing to
-      install it as root; check `{{ hermes_agent_unit_lines | reject('match', hermes_agent_unit_line_regex) | list }}`.
+      install it as root.
     quiet: true
 
 - name: Install the gateway unit
@@ -118,6 +126,20 @@
     owner: root
     group: root
     mode: "0755"
+
+# Belt and braces: a root-owned drop-in pins the identity whatever the unit says.
+- name: Pin the gateway's user and group
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (hermes_agent role); local edits are overwritten.
+      [Service]
+      User={{ hermes_agent_user }}
+      Group={{ hermes_agent_group }}
+    dest: "{{ hermes_agent_gateway_unit_path }}.d/10-ansible-identity.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart hermes gateway
 
 - name: Install the gateway hardening drop-in
   ansible.builtin.template:

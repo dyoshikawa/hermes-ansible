@@ -16,7 +16,7 @@ case "$(id -un)" in
     # --pty: do not hand root's terminal to the service account (TIOCSTI).
     # env -i: do not leak root's environment (SUDO_USER, SSH_AUTH_SOCK, ...).
     pty=
-    if [ -t 0 ]; then pty=--pty; fi
+    if [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then pty=--pty; fi
     exec runuser $pty -u "$service_user" -- env -i \
       HOME="$service_home" USER="$service_user" LOGNAME="$service_user" \
       HERMES_HOME="$hermes_home" PATH=/usr/local/bin:/usr/bin:/bin \

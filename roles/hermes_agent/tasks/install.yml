@@ -28,6 +28,8 @@
 - name: Check for an existing install
   ansible.builtin.stat:
     path: "{{ hermes_agent_launcher }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
   register: hermes_agent_launcher_stat
 
 - name: Read the installed commit
@@ -68,14 +70,18 @@
 - name: Confirm the launcher exists
   ansible.builtin.stat:
     path: "{{ hermes_agent_launcher }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
   register: hermes_agent_launcher_stat
   failed_when: not hermes_agent_launcher_stat.stat.exists
 
-# `uv pip install --editable` reinstalls the package on every run, so the extras
-# are keyed on the lockfile checksum and re-applied only when that or the list changes.
+# `hermes pm install` re-syncs the environment on every run, so the extras are
+# keyed on the lockfile checksum and re-applied only when that or the list changes.
 - name: Checksum the lockfile the extras resolve against
   ansible.builtin.stat:
     path: "{{ hermes_agent_install_dir }}/uv.lock"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
   register: hermes_agent_lockfile
   when: hermes_agent_extras | length > 0
 

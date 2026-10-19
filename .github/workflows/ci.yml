@@ -98,6 +98,7 @@ jobs:
           grep -q '^User=hermes$' /etc/systemd/system/hermes-gateway.service
           grep -q 'HERMES_HOME=/home/hermes/.hermes' /etc/systemd/system/hermes-gateway.service
           test "$(stat -c '%U:%G' /etc/systemd/system/hermes-gateway.service)" = 'root:root'
+          grep -qx 'User=hermes' /etc/systemd/system/hermes-gateway.service.d/10-ansible-identity.conf
           test "$(systemctl show -p User --value hermes-gateway)" = hermes
           test "$(systemctl show -p NoNewPrivileges --value hermes-gateway)" = yes
           test "$(systemctl show -p ProtectSystem --value hermes-gateway)" = strict
