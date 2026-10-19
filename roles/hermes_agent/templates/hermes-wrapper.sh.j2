@@ -1,0 +1,21 @@
+#!/bin/sh
+# Managed by Ansible (hermes_agent role); local edits are overwritten.
+# Runs Hermes Agent as {{ hermes_agent_user }}. The launcher lives in a venv that
+# account can write to, so it must never run with anyone else's privileges.
+set -eu
+launcher={{ hermes_agent_launcher | quote }}
+service_user={{ hermes_agent_user | quote }}
+service_home={{ hermes_agent_home | quote }}
+hermes_home={{ hermes_agent_hermes_home | quote }}
+
+case "$(id -un)" in
+  "$service_user")
+    exec "$launcher" "$@"
+    ;;
+  root)
+    exec runuser -u "$service_user" -- env HOME="$service_home" HERMES_HOME="$hermes_home" "$launcher" "$@"
+    ;;
+  *)
+    exec sudo -u "$service_user" -H "$launcher" "$@"
+    ;;
+esac
