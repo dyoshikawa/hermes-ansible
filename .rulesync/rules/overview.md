@@ -23,8 +23,10 @@ Everything lives in one role, `roles/hermes_agent`; `site.yml` applies it to the
   non-secret settings are merged recursively into `~/.hermes/config.yaml` from `hermes_agent_config`.
   The installer seeds both files, so the role edits them (lineinfile / combine) rather than templating
   them wholesale unless `hermes_agent_env_exclusive` is set.
-- The gateway is installed with `hermes gateway install --system --run-as-user <user>` run as root;
-  the unit content (KillMode, Restart, HERMES_HOME) is owned by Hermes, not by this role.
+- The gateway unit content (ExecStart launcher, PATH, KillMode, Restart, HERMES_HOME) is owned by
+  Hermes, not by this role: `tasks/gateway.yml` has Hermes render it as the service account (never
+  as root), refuses a unit whose shape does not match what Hermes emits, then installs it as root
+  with a root-owned drop-in pinning `User=`/`Group=` and enables lingering for the account.
 - Every task must be idempotent: CI runs the playbook twice on `ubuntu-24.04` and `ubuntu-26.04`
   runners and fails when the second run reports changes. Prefer `stat` + `when` or
   `changed_when` over `command` tasks that always report changed.
