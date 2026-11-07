@@ -88,7 +88,7 @@ All variables live in `roles/hermes_agent/defaults/main.yml`; the most useful on
 | `hermes_agent_system_command` | `true` | Install the root-owned `/usr/local/bin/hermes` wrapper (`false` removes it). |
 | `hermes_agent_install_browser` | `false` | Keep Playwright/Chromium (browser tools). Off for headless servers. |
 | `hermes_agent_extra_apt_packages` | `[]` | Extra apt packages, e.g. `ffmpeg` for voice notes. |
-| `hermes_agent_user_groups` | `[]` | Supplementary groups, e.g. `["docker"]` for `terminal.backend: docker` — see [Security notes](#security-notes). |
+| `hermes_agent_user_groups` | `[]` | Supplementary groups, e.g. `["docker"]` for `terminal.backend: docker` — see [Security notes](#security-notes). The list is authoritative: groups not in it are removed from the account. |
 | `hermes_agent_supported_releases` | `["24.04", "26.04"]` | Ubuntu releases the preflight accepts; `hermes_agent_check_distribution: false` disables the check. |
 
 ### Example: Telegram bot on OpenRouter
@@ -170,6 +170,15 @@ Manage the service with `sudo systemctl … hermes-gateway`. `hermes gateway ins
   container that mounts `/`. Adding `docker` to `hermes_agent_user_groups` therefore gives the agent
   (and anything that compromises it) root on the VPS. Prefer rootless Docker or a dedicated VM when
   you need the docker terminal backend.
+- `hermes_agent_user_groups` is the account's exact set of supplementary groups, so removing
+  `docker` from it revokes the membership on the next play (and restarts the gateway so the running
+  process drops it). Processes already running as `hermes` outside the gateway, such as cron and
+  Kanban workers under `user@<uid>.service`, keep the old groups until they restart.
+- Modules of tasks that run as `hermes` execute in that account's trust domain. `ansible.cfg` sets
+  `inject_facts_as_vars = False` so facts they return cannot override role variables for the root
+  tasks that follow; keep that setting if you apply the role from your own playbook. Tasks writing
+  into `~hermes/.hermes` set `diff: false`, but other `--diff` and `-v` output of those tasks can
+  still carry text the `hermes` account controls.
 
 ## Layout
 

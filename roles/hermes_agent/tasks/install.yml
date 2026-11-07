@@ -85,6 +85,9 @@
   register: hermes_agent_lockfile
   when: hermes_agent_extras | length > 0
 
+# diff: false here and on every write into ~/.hermes: the service account can
+# rewrite these files, and --diff would print their raw bytes (terminal escape
+# sequences included) to the operator's terminal.
 - name: Record which extras are installed
   ansible.builtin.copy:
     content: "{{ hermes_agent_extras | sort | join(',') }} {{ hermes_agent_lockfile.stat.checksum | default('') }}\n"
@@ -92,6 +95,7 @@
     owner: "{{ hermes_agent_user }}"
     group: "{{ hermes_agent_group }}"
     mode: "0600"
+  diff: false
   become: true
   become_user: "{{ hermes_agent_user }}"
   register: hermes_agent_extras_stamp

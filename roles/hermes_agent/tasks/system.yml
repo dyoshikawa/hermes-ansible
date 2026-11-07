@@ -11,16 +11,20 @@
     name: "{{ hermes_agent_group }}"
     state: present
 
+# append: false makes hermes_agent_user_groups the account's exact supplementary
+# group set, so removing a group (e.g. the root-equivalent docker) revokes it.
+# The restart drops the old group from the running gateway's credentials.
 - name: Create the service account
   ansible.builtin.user:
     name: "{{ hermes_agent_user }}"
     group: "{{ hermes_agent_group }}"
     groups: "{{ hermes_agent_user_groups }}"
-    append: true
+    append: false
     home: "{{ hermes_agent_home }}"
     shell: /bin/bash
     create_home: true
     state: present
+  notify: Restart hermes gateway
 
 - name: Keep the home directory private
   ansible.builtin.file:
