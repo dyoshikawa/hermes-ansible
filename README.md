@@ -171,14 +171,14 @@ Manage the service with `sudo systemctl … hermes-gateway`. `hermes gateway ins
   (and anything that compromises it) root on the VPS. Prefer rootless Docker or a dedicated VM when
   you need the docker terminal backend.
 - `hermes_agent_user_groups` is the account's exact set of supplementary groups, so removing
-  `docker` from it revokes the membership on the next play (and restarts the gateway so the running
-  process drops it). Processes already running as `hermes` outside the gateway, such as cron and
-  Kanban workers under `user@<uid>.service`, keep the old groups until they restart.
+  `docker` from it revokes the membership on the next play. The play also restarts the gateway and
+  the account's user manager (`user@<uid>.service`, which starts cron and Kanban workers) when they
+  still run with groups the account no longer has; this stops workers running at that moment.
 - Modules of tasks that run as `hermes` execute in that account's trust domain. `ansible.cfg` sets
   `inject_facts_as_vars = False` so facts they return cannot override role variables for the root
   tasks that follow; keep that setting if you apply the role from your own playbook. Tasks writing
-  into `~hermes/.hermes` set `diff: false`, but other `--diff` and `-v` output of those tasks can
-  still carry text the `hermes` account controls.
+  into `~hermes/.hermes` set `diff: false`, but warnings and other `--diff` and `-v` output of
+  those tasks can still carry text the `hermes` account controls.
 
 ## Layout
 
