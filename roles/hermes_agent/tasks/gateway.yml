@@ -185,8 +185,10 @@
     for unit in "$GATEWAY_UNIT" "user@$SERVICE_UID.service"; do
       pid=$(systemctl show -p MainPID --value "$unit")
       [ "${pid:-0}" -gt 0 ] || continue
-      have=$(awk '/^Groups:/ { for (i = 2; i <= NF; i++) print $i }' "/proc/$pid/status" \
-        | sort -n | tr '\n' ' ')
+      # The process may exit in between (e.g. a crash-looping gateway).
+      status=$(cat "/proc/$pid/status" 2>/dev/null) || continue
+      have=$(printf '%s\n' "$status" \
+        | awk '/^Groups:/ { for (i = 2; i <= NF; i++) print $i }' | sort -n | tr '\n' ' ')
       [ "$have" = "$want" ] || echo "$unit"
     done
   args:

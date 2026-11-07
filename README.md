@@ -174,6 +174,8 @@ Manage the service with `sudo systemctl … hermes-gateway`. `hermes gateway ins
   `docker` from it revokes the membership on the next play. The play also restarts the gateway and
   the account's user manager (`user@<uid>.service`, which starts cron and Kanban workers) when they
   still run with groups the account no longer has; this stops workers running at that moment.
+  Other `hermes` processes (login sessions, `hermes` CLI runs in progress, containers already
+  started through docker) keep the old groups until they end.
 - Modules of tasks that run as `hermes` execute in that account's trust domain. `ansible.cfg` sets
   `inject_facts_as_vars = False` so facts they return cannot override role variables for the root
   tasks that follow; keep that setting if you apply the role from your own playbook. Tasks writing
