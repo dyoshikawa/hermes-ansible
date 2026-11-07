@@ -19,6 +19,7 @@
     group: "{{ hermes_agent_group }}"
     mode: "0600"
   no_log: true
+  diff: false
   when: hermes_agent_env_exclusive | bool
   notify: Restart hermes gateway
   become: true
@@ -40,6 +41,7 @@
   loop_control:
     label: "{{ item.key }}"
   no_log: true
+  diff: false
   when: not hermes_agent_env_exclusive | bool
   notify: Restart hermes gateway
   become: true
@@ -64,6 +66,8 @@
     owner: "{{ hermes_agent_user }}"
     group: "{{ hermes_agent_group }}"
     mode: "0600"
+  # The service account owns config.yaml: keep its raw bytes out of --diff output.
+  diff: false
   when: hermes_agent_config | length > 0
   notify: Restart hermes gateway
   become: true

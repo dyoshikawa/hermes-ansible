@@ -13,11 +13,14 @@ case "$(id -un)" in
     exec "$launcher" "$@"
     ;;
   root)
-    # --pty: do not hand root's terminal to the service account (TIOCSTI).
+    # Never hand root's controlling terminal to the service account (TIOCSTI):
+    # --pty gives it a fresh pty when a standard fd is a terminal; otherwise
+    # setsid starts it in a new session, since root may still have a
+    # controlling terminal with every standard fd redirected.
     # env -i: do not leak root's environment (SUDO_USER, SSH_AUTH_SOCK, ...).
-    pty=
-    if [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then pty=--pty; fi
-    exec runuser $pty -u "$service_user" -- env -i \
+    detach="setsid --wait" pty=
+    if [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then detach= pty=--pty; fi
+    exec $detach runuser $pty -u "$service_user" -- env -i \
       HOME="$service_home" USER="$service_user" LOGNAME="$service_user" \
       HERMES_HOME="$hermes_home" PATH=/usr/local/bin:/usr/bin:/bin \
       TERM="${TERM:-dumb}" LANG="${LANG:-C.UTF-8}" \

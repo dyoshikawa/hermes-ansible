@@ -171,3 +171,38 @@
     enabled: true
     state: "{{ hermes_agent_gateway_state }}"
     daemon_reload: true
+
+# Processes keep the supplementary groups they started with, so a group removed
+# from hermes_agent_user_groups (e.g. docker) survives in the running gateway
+# and in the lingering user manager, which would hand it to every cron/Kanban
+# worker it starts. Compare their groups with the account's on every play (a
+# handler would be lost if the play failed after the group change) and restart
+# the ones that differ.
+- name: Find services still running with stale supplementary groups
+  ansible.builtin.shell: |
+    set -eu -o pipefail
+    want=$(id -G "$SERVICE_USER" | tr ' ' '\n' | sort -n | tr '\n' ' ')
+    for unit in "$GATEWAY_UNIT" "user@$SERVICE_UID.service"; do
+      pid=$(systemctl show -p MainPID --value "$unit")
+      [ "${pid:-0}" -gt 0 ] || continue
+      # The process may exit in between (e.g. a crash-looping gateway).
+      status=$(cat "/proc/$pid/status" 2>/dev/null) || continue
+      have=$(printf '%s\n' "$status" \
+        | awk '/^Groups:/ { for (i = 2; i <= NF; i++) print $i }' | sort -n | tr '\n' ' ')
+      [ "$have" = "$want" ] || echo "$unit"
+    done
+  args:
+    executable: /bin/bash
+  environment:
+    SERVICE_USER: "{{ hermes_agent_user }}"
+    SERVICE_UID: "{{ ansible_facts['getent_passwd'][hermes_agent_user][1] }}"
+    GATEWAY_UNIT: "{{ hermes_agent_gateway_service_name }}.service"
+  register: hermes_agent_stale_group_units
+  changed_when: false
+  check_mode: false
+
+- name: Restart services that still hold removed groups
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ hermes_agent_stale_group_units.stdout_lines }}"
