@@ -20,6 +20,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          persist-credentials: false
           # gitleaks scans the whole history
           fetch-depth: 0
 
@@ -53,6 +54,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup mise
         uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
@@ -109,6 +112,52 @@ jobs:
           test "$(systemctl show -p NRestarts --value hermes-gateway)" = 0
           sudo -u hermes -H git -C /home/hermes/.hermes/hermes-agent rev-parse HEAD \
             | grep -qx "$(grep -E '^hermes_agent_commit:' roles/hermes_agent/defaults/main.yml | awk '{print $2}')"
+
+      # Regression: hermes_agent_user_groups is authoritative, so a group that
+      # is no longer listed (e.g. a revoked docker grant) is removed, and the
+      # gateway still running with it is restarted without it.
+      - name: Revoke a group dropped from hermes_agent_user_groups
+        run: |
+          adm_gid=$(getent group adm | cut -d: -f3)
+          gateway_groups() {
+            pid=$(systemctl show -p MainPID --value hermes-gateway)
+            sudo awk '/^Groups:/ { for (i = 2; i <= NF; i++) print $i }' "/proc/$pid/status"
+          }
+          sudo usermod -a -G adm hermes
+          sudo systemctl restart hermes-gateway
+          gateway_groups | grep -qx "$adm_gid"
+          uv run ansible-playbook -i tests/inventory.yml site.yml
+          if id -nG hermes | tr ' ' '\n' | grep -qx adm; then
+            echo "hermes is still in adm after the play" >&2
+            exit 1
+          fi
+          if gateway_groups | grep -qx "$adm_gid"; then
+            echo "the gateway still runs with adm after the play" >&2
+            exit 1
+          fi
+
+      # Regression: --diff must not print bytes the service account wrote
+      # into ~/.hermes (terminal escape sequences) to the operator's terminal.
+      # .ansible-extras stands in for every such write; changing it also
+      # re-runs the extras install, which is expected here.
+      - name: Keep service-account bytes out of --diff output
+        env:
+          ANSIBLE_NOCOLOR: "1"
+        run: |
+          printf 'messaging 0\033]0;HERMES-CI\007\n' \
+            | sudo -u hermes tee /home/hermes/.hermes/.ansible-extras >/dev/null
+          uv run ansible-playbook -i tests/inventory.yml site.yml --diff > diff-run.log \
+            || { cat -v diff-run.log; exit 1; }
+          if grep -q "$(printf '\033')" diff-run.log; then
+            cat -v diff-run.log
+            echo "--diff output contains an escape character" >&2
+            exit 1
+          fi
+          if grep -q 'HERMES-CI' diff-run.log; then
+            cat -v diff-run.log
+            echo "--diff output contains the planted file content" >&2
+            exit 1
+          fi
 
       - name: Show the gateway log
         if: always()
